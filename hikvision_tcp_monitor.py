@@ -20,6 +20,8 @@ import queue
 import time
 from concurrent.futures import ThreadPoolExecutor
 import traceback
+import configparser
+from pathlib import Path
 from database_connection import DatabaseManager
 from queue_worker import QueueWorker
 import pystray
@@ -75,20 +77,65 @@ class ConcurrentEventHandler(BaseHTTPRequestHandler):
         pass
 
 class HikvisionIntegratedMonitor:
+    def load_config_from_ini(self):
+        """Cargar configuracion desde archivo hikmon.ini"""
+        config = {
+            'server_port': 8080,
+            'udl_file': 'videoman.udl'
+        }
+        
+        ini_file = Path('hikmon.ini')
+        
+        if not ini_file.exists():
+            print(f"Archivo hikmon.ini no encontrado, usando valores por defecto")
+            print(f"Puerto: {config['server_port']}, UDL: {config['udl_file']}")
+            return config
+        
+        try:
+            parser = configparser.ConfigParser()
+            parser.read(ini_file, encoding='utf-8')
+            
+            if 'Config' in parser:
+                # Leer server_port
+                if 'server_port' in parser['Config']:
+                    try:
+                        config['server_port'] = int(parser['Config']['server_port'])
+                    except ValueError:
+                        print(f"Error: server_port invalido en hikmon.ini, usando {config['server_port']}")
+                
+                # Leer udl_file (remover comillas si existen)
+                if 'udl_file' in parser['Config']:
+                    udl_value = parser['Config']['udl_file']
+                    # Remover comillas dobles si existen
+                    config['udl_file'] = udl_value.strip('"').strip("'")
+            
+            print(f"Configuracion cargada desde hikmon.ini:")
+            print(f"  server_port: {config['server_port']}")
+            print(f"  udl_file: {config['udl_file']}")
+            
+        except Exception as e:
+            print(f"Error leyendo hikmon.ini: {e}")
+            print(f"Usando valores por defecto")
+        
+        return config
+
     def __init__(self, root):
         self.root = root
         self.root.title("Monitor Hikvision + Worker de Cola")
         self.root.geometry("750x550")
         self.root.resizable(True, True)
         
+        # Cargar configuracion desde hikmon.ini
+        self.config = self.load_config_from_ini()
+        
         # System Tray
         self.tray_icon = None
         self.is_visible = True
         
-        # Servidor HTTP
+        # Servidor HTTP - usar valor de configuracion
         self.event_server = None
         self.event_server_thread = None
-        self.server_port = 8080
+        self.server_port = self.config.get('server_port', 8080)
         
         # Procesamiento asincrono
         self.event_queue = queue.Queue()
@@ -96,8 +143,9 @@ class HikvisionIntegratedMonitor:
         self.is_processing = False
         self.executor = ThreadPoolExecutor(max_workers=10)
         
-        # Base de Datos
-        self.db_manager = DatabaseManager(udl_file="videoman.udl")
+        # Base de Datos - usar valor de configuracion
+        udl_file = self.config.get('udl_file', 'videoman.udl')
+        self.db_manager = DatabaseManager(udl_file=udl_file)
         self.db_manager.connect()
         
         # Queue Worker
@@ -249,7 +297,7 @@ class HikvisionIntegratedMonitor:
         server_control_frame.pack(fill=tk.X, pady=(0, 5))
 
         ttk.Label(server_control_frame, text="Puerto:").pack(side=tk.LEFT)
-        self.port_var = tk.StringVar(value="8080")
+        self.port_var = tk.StringVar(value=str(self.server_port))
         ttk.Entry(server_control_frame, textvariable=self.port_var, width=8, state=tk.DISABLED).pack(side=tk.LEFT, padx=(5, 10))
 
         self.start_server_btn = ttk.Button(server_control_frame, text="Iniciar", command=self.start_server, state=tk.DISABLED)
