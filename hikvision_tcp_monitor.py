@@ -122,7 +122,7 @@ class HikvisionIntegratedMonitor:
     def __init__(self, root):
         self.root = root
         self.root.title("Monitor Hikvision + Worker de Cola")
-        self.root.geometry("750x550")
+        self.root.geometry("750x750")
         self.root.resizable(True, True)
         
         # Cargar configuracion desde hikmon.ini
@@ -187,7 +187,7 @@ class HikvisionIntegratedMonitor:
             self.log_message(f"Error cargando icono de ventana: {e}")
 
     def setup_system_tray(self):
-        """Configurar icono en System Tray"""
+        """Configurar icono en System Tray con estados dinamicos"""
         try:
             # Cargar icono
             icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
@@ -199,8 +199,29 @@ class HikvisionIntegratedMonitor:
                 image = Image.new('RGB', (64, 64), color='darkblue')
                 self.log_message("Usando icono por defecto - icon.ico no encontrado")
             
-            # Crear menu del tray
+            # Crear menu del tray con estados dinamicos
             menu = pystray.Menu(
+                pystray.MenuItem(
+                    lambda text: self.get_db_status_text(),
+                    lambda item: None,
+                    enabled=False
+                ),
+                pystray.MenuItem(
+                    lambda text: self.get_server_status_text(),
+                    lambda item: None,
+                    enabled=False
+                ),
+                pystray.MenuItem(
+                    lambda text: f"Puerto: {self.server_port}",
+                    lambda item: None,
+                    enabled=False
+                ),
+                pystray.MenuItem(
+                    lambda text: self.get_worker_status_text(),
+                    lambda item: None,
+                    enabled=False
+                ),
+                pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Mostrar", self.show_window, default=True),
                 pystray.MenuItem("Ocultar", self.hide_window),
                 pystray.Menu.SEPARATOR,
@@ -219,9 +240,58 @@ class HikvisionIntegratedMonitor:
             threading.Thread(target=self.tray_icon.run, daemon=True).start()
             self.log_message("System Tray inicializado correctamente")
             
+            # Iniciar actualizacion periodica del menu
+            self.root.after(2000, self.update_tray_status)
+            
         except Exception as e:
             self.log_message(f"Error configurando System Tray: {e}")
             traceback.print_exc()
+
+    def get_db_status_text(self):
+        """Obtener texto del estado de la base de datos"""
+        try:
+            if self.db_manager and self.db_manager.get_connection():
+                return "Base de datos: Conectada"
+            else:
+                return "Base de datos: Desconectada"
+        except Exception:
+            return "Base de datos: Desconectada"
+
+    def get_server_status_text(self):
+        """Obtener texto del estado del servidor HTTP"""
+        try:
+            if self.event_server and self.event_server_thread and self.event_server_thread.is_alive():
+                return "Servidor Eventos: Activo"
+            else:
+                return "Servidor Eventos: Inactivo"
+        except Exception:
+            return "Servidor Eventos: Inactivo"
+
+    def get_worker_status_text(self):
+        """Obtener texto del estado del worker"""
+        try:
+            if self.queue_worker and self.queue_worker.is_running:
+                return "Worker: Activo"
+            else:
+                return "Worker: Inactivo"
+        except Exception:
+            return "Worker: Inactivo"
+
+    def update_tray_status(self):
+        """Actualizar estados en el menu del tray periodicamente"""
+        try:
+            if self.tray_icon:
+                # Forzar actualizacion del menu
+                self.tray_icon.update_menu()
+        except Exception as e:
+            pass  # Ignorar errores silenciosamente
+        
+        # Programar siguiente actualizacion (cada 2 segundos)
+        try:
+            if self.root and self.root.winfo_exists():
+                self.root.after(2000, self.update_tray_status)
+        except Exception:
+            pass
 
     def show_window(self, icon=None, item=None):
         """Mostrar ventana principal"""
