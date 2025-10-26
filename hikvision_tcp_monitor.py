@@ -122,7 +122,7 @@ class HikvisionIntegratedMonitor:
     def __init__(self, root):
         self.root = root
         self.root.title("Monitor Hikvision + Worker de Cola")
-        self.root.geometry("750x750")
+        self.root.geometry("650x650")
         self.root.resizable(True, True)
         
         # Cargar configuracion desde hikmon.ini
