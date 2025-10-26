@@ -103,6 +103,7 @@ class HikvisionIntegratedMonitor:
         self.setup_ui()
         self.start_event_processor()
         self.root.after(100, self.start_server)
+        self.root.after(300, self.start_worker)  # Iniciar worker automaticamente
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def setup_ui(self):
