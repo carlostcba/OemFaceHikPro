@@ -3,7 +3,7 @@
 """
 hikvision_tcp_monitor_integrated.py
 Monitor de eventos Hikvision + Worker de Cola Automatico
-Con soporte para System Tray
+Con soporte para System Tray y verificacion automatica de BD
 """
 
 import tkinter as tk
@@ -81,7 +81,8 @@ class HikvisionIntegratedMonitor:
         """Cargar configuracion desde archivo hikmon.ini"""
         config = {
             'server_port': 8080,
-            'udl_file': 'videoman.udl'
+            'udl_file': 'videoman.udl',
+            'db_state': 0  # Por defecto, asumir que no se ha verificado
         }
         
         ini_file = Path('hikmon.ini')
@@ -89,6 +90,8 @@ class HikvisionIntegratedMonitor:
         if not ini_file.exists():
             print(f"Archivo hikmon.ini no encontrado, usando valores por defecto")
             print(f"Puerto: {config['server_port']}, UDL: {config['udl_file']}")
+            # Crear archivo INI con valores por defecto
+            self.save_db_state_to_ini(0)
             return config
         
         try:
@@ -108,16 +111,148 @@ class HikvisionIntegratedMonitor:
                     udl_value = parser['Config']['udl_file']
                     # Remover comillas dobles si existen
                     config['udl_file'] = udl_value.strip('"').strip("'")
+                
+                # Leer db_state
+                if 'db_state' in parser['Config']:
+                    try:
+                        config['db_state'] = int(parser['Config']['db_state'])
+                    except ValueError:
+                        config['db_state'] = 0
             
             print(f"Configuracion cargada desde hikmon.ini:")
             print(f"  server_port: {config['server_port']}")
             print(f"  udl_file: {config['udl_file']}")
+            print(f"  db_state: {config['db_state']}")
             
         except Exception as e:
             print(f"Error leyendo hikmon.ini: {e}")
             print(f"Usando valores por defecto")
         
         return config
+
+    def save_db_state_to_ini(self, db_state):
+        """Guardar db_state en archivo hikmon.ini"""
+        try:
+            ini_file = Path('hikmon.ini')
+            parser = configparser.ConfigParser()
+            
+            # Leer archivo existente o crear nuevo
+            if ini_file.exists():
+                parser.read(ini_file, encoding='utf-8')
+            
+            # Asegurar que existe la seccion Config
+            if not parser.has_section('Config'):
+                parser.add_section('Config')
+            
+            # Actualizar db_state
+            parser.set('Config', 'db_state', str(db_state))
+            
+            # Mantener otros valores si existen
+            if not parser.has_option('Config', 'server_port'):
+                parser.set('Config', 'server_port', str(self.server_port))
+            if not parser.has_option('Config', 'udl_file'):
+                parser.set('Config', 'udl_file', '"videoman.udl"')
+            
+            # Guardar archivo
+            with open(ini_file, 'w', encoding='utf-8') as f:
+                parser.write(f)
+            
+            print(f"db_state actualizado a {db_state} en hikmon.ini")
+            
+        except Exception as e:
+            print(f"Error guardando db_state en hikmon.ini: {e}")
+
+    def check_and_create_database_schema(self):
+        """Verificar y crear tablas y columnas necesarias en la base de datos"""
+        if not self.db_manager or not self.db_manager.get_connection():
+            print("No se puede verificar esquema: DB no conectada")
+            return False
+        
+        try:
+            print("Verificando esquema de base de datos...")
+            
+            # 1. Verificar/Crear tabla cola_comunicacion
+            if not self.table_exists('cola_comunicacion'):
+                print("Creando tabla cola_comunicacion...")
+                create_table_sql = """
+                    CREATE TABLE dbo.cola_comunicacion (
+                        id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                        transmision VARCHAR(50) NULL,
+                        recepcion VARCHAR(150) NULL,
+                        FieldName VARCHAR(30) NULL,
+                        createdAt DATETIME NOT NULL DEFAULT (GETDATE())
+                    )
+                """
+                self.db_manager.execute_command(create_table_sql)
+                print("Tabla cola_comunicacion creada exitosamente")
+            else:
+                print("Tabla cola_comunicacion ya existe")
+            
+            # 2. Verificar/Agregar columnas a tabla mdl
+            if self.table_exists('mdl'):
+                print("Verificando columnas en tabla mdl...")
+                
+                columns_to_add = {
+                    'HikID': 'VARCHAR(50) NULL',
+                    'HikIP': 'VARCHAR(45) NULL',
+                    'HikUsuario': 'VARCHAR(32) NULL',
+                    'HikPassword': 'VARCHAR(255) NULL',
+                    'HikPuertoHTTP': 'INT NULL',
+                    'HikPuertoHTTPS': 'INT NULL',
+                    'HikPuertoRTSP': 'INT NULL',
+                    'HikPuertoSVR': 'INT NULL',
+                    'HikEnable': 'INT NULL'
+                }
+                
+                for column_name, column_def in columns_to_add.items():
+                    if not self.column_exists('mdl', column_name):
+                        print(f"Agregando columna {column_name} a tabla mdl...")
+                        alter_sql = f"ALTER TABLE dbo.mdl ADD {column_name} {column_def}"
+                        self.db_manager.execute_command(alter_sql)
+                        print(f"Columna {column_name} agregada exitosamente")
+                    else:
+                        print(f"Columna {column_name} ya existe en tabla mdl")
+            else:
+                print("ADVERTENCIA: Tabla mdl no existe - no se pueden agregar columnas Hikvision")
+            
+            print("Verificacion de esquema completada exitosamente")
+            return True
+            
+        except Exception as e:
+            print(f"Error verificando/creando esquema de BD: {e}")
+            traceback.print_exc()
+            return False
+
+    def table_exists(self, table_name):
+        """Verificar si una tabla existe en la base de datos"""
+        try:
+            sql = """
+                SELECT 1
+                FROM sys.tables t
+                JOIN sys.schemas s ON s.schema_id = t.schema_id
+                WHERE t.name = ? AND s.name = 'dbo'
+            """
+            result = self.db_manager.execute_query(sql, (table_name,))
+            return len(result) > 0
+        except Exception as e:
+            print(f"Error verificando existencia de tabla {table_name}: {e}")
+            return False
+
+    def column_exists(self, table_name, column_name):
+        """Verificar si una columna existe en una tabla"""
+        try:
+            sql = """
+                SELECT 1
+                FROM sys.columns c
+                JOIN sys.tables t ON c.object_id = t.object_id
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE t.name = ? AND c.name = ? AND s.name = 'dbo'
+            """
+            result = self.db_manager.execute_query(sql, (table_name, column_name))
+            return len(result) > 0
+        except Exception as e:
+            print(f"Error verificando existencia de columna {column_name} en {table_name}: {e}")
+            return False
 
     def __init__(self, root):
         self.root = root
@@ -147,6 +282,19 @@ class HikvisionIntegratedMonitor:
         udl_file = self.config.get('udl_file', 'videoman.udl')
         self.db_manager = DatabaseManager(udl_file=udl_file)
         self.db_manager.connect()
+        
+        # Verificar esquema de BD si es necesario
+        db_state = self.config.get('db_state', 0)
+        if db_state == 0:
+            print("db_state=0: Verificando esquema de base de datos...")
+            if self.check_and_create_database_schema():
+                # Actualizacion exitosa, guardar db_state=1
+                self.save_db_state_to_ini(1)
+                print("Esquema verificado - db_state actualizado a 1")
+            else:
+                print("Error en verificacion de esquema - db_state permanece en 0")
+        else:
+            print("db_state=1: Omitiendo verificacion de esquema (ya verificado previamente)")
         
         # Queue Worker
         self.queue_worker = QueueWorker(self.db_manager, log_callback=self.log_worker)
