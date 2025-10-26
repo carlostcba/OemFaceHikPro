@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 import os
 from pathlib import Path
+from PIL import Image
 from hikvision_manager import HikvisionManager
 
 class QueueWorker:
@@ -266,8 +267,99 @@ class QueueWorker:
         
         return None
     
+    def _optimize_image(self, image_path, max_width=600, max_height=900, max_size_kb=150):
+        """
+        Optimizar imagen para Hikvision manteniendo aspect ratio
+        
+        Args:
+            image_path: Path de imagen original
+            max_width: Ancho maximo en pixels (Hikvision: 600)
+            max_height: Alto maximo en pixels (Hikvision: 900)
+            max_size_kb: Tamano maximo en KB (Hikvision: 150)
+            
+        Returns:
+            Path de imagen optimizada (temporal) o None si falla
+        """
+        try:
+            # Abrir imagen
+            img = Image.open(image_path)
+            
+            # Obtener dimensiones originales
+            orig_width, orig_height = img.size
+            file_size_kb = os.path.getsize(image_path) / 1024
+            
+            self.log(f"Imagen original: {orig_width}x{orig_height} ({file_size_kb:.1f}KB)")
+            
+            # Verificar si necesita optimizacion
+            needs_resize = orig_width > max_width or orig_height > max_height
+            needs_compress = file_size_kb > max_size_kb
+            
+            if not needs_resize and not needs_compress:
+                self.log("Imagen ya tiene tamano optimo")
+                return image_path
+            
+            # Calcular nuevas dimensiones manteniendo aspect ratio
+            if needs_resize:
+                ratio = min(max_width / orig_width, max_height / orig_height)
+                new_width = int(orig_width * ratio)
+                new_height = int(orig_height * ratio)
+                
+                self.log(f"Redimensionando a {new_width}x{new_height} (ratio: {ratio:.2f})")
+                
+                # Redimensionar con calidad alta
+                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # Convertir a RGB si es necesario (Hikvision no acepta RGBA)
+            if img.mode in ('RGBA', 'LA', 'P'):
+                self.log(f"Convirtiendo de {img.mode} a RGB")
+                rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                rgb_img.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                img = rgb_img
+            
+            # Guardar temporalmente con compresion
+            temp_path = os.path.join(os.path.dirname(image_path), f"temp_{os.path.basename(image_path)}")
+            
+            # Ajustar calidad inicial segun tamano necesario
+            quality = 90  # Empezar con 90% para archivos mas pequenos
+            if needs_compress or file_size_kb > max_size_kb:
+                quality = 80  # Empezar mas bajo si ya sabemos que es grande
+            
+            img.save(temp_path, 'JPEG', quality=quality, optimize=True)
+            
+            # Verificar tamano final
+            final_size_kb = os.path.getsize(temp_path) / 1024
+            self.log(f"Imagen optimizada: {img.size[0]}x{img.size[1]} ({final_size_kb:.1f}KB, Q={quality})")
+            
+            # Compresion iterativa si aun es muy grande
+            attempts = 0
+            max_attempts = 5
+            
+            while final_size_kb > max_size_kb and quality > 50 and attempts < max_attempts:
+                attempts += 1
+                quality = max(50, quality - 10)  # Reducir de 10 en 10, minimo 50
+                
+                self.log(f"Recomprimiendo intento {attempts} con calidad {quality}%...")
+                img.save(temp_path, 'JPEG', quality=quality, optimize=True)
+                final_size_kb = os.path.getsize(temp_path) / 1024
+                self.log(f"Resultado: {final_size_kb:.1f}KB")
+            
+            # Verificacion final
+            if final_size_kb > max_size_kb:
+                self.log(f"ADVERTENCIA: Imagen final ({final_size_kb:.1f}KB) aun supera limite ({max_size_kb}KB)")
+                self.log("Puede fallar en subida. Considere imagen con menor resolucion original.")
+            else:
+                self.log(f"Imagen final: {final_size_kb:.1f}KB (dentro del limite)")
+            
+            return temp_path
+            
+        except Exception as e:
+            self.log(f"Error optimizando imagen: {e}")
+            return None
+    
     def _execute_add_update(self, hik_manager, persona_id, hik_ip, operation):
         """Ejecutar operacion de alta o actualizacion"""
+        optimized_image_path = None
+        
         try:
             # Obtener datos de persona
             persona_data = self._get_persona_data(persona_id)
@@ -278,12 +370,23 @@ class QueueWorker:
             # Construir nombre completo
             nombre_completo = f"{persona_data['nombre']} {persona_data['apellido']}".strip()
             
-            # Obtener path de imagen
-            image_path = self._get_image_path(persona_id)
+            # Obtener path de imagen original
+            original_image_path = self._get_image_path(persona_id)
             
-            if not image_path:
+            if not original_image_path:
                 self.log(f"WARNING: No se encontro imagen para persona {persona_id}")
                 # Continuar sin imagen
+                image_path_to_use = None
+            else:
+                # Optimizar imagen
+                self.log(f"Optimizando imagen para persona {persona_id}...")
+                optimized_image_path = self._optimize_image(original_image_path)
+                
+                if optimized_image_path:
+                    image_path_to_use = optimized_image_path
+                else:
+                    self.log("WARNING: Error optimizando imagen, intentando con original")
+                    image_path_to_use = original_image_path
             
             # Formatear fechas
             fecha_inicio = None
@@ -304,7 +407,7 @@ class QueueWorker:
                 enabled=True,
                 start_date=fecha_inicio,
                 end_date=fecha_fin,
-                image_path=image_path
+                image_path=image_path_to_use
             )
             
             if success:
@@ -317,6 +420,15 @@ class QueueWorker:
         except Exception as e:
             self.log(f"ERROR ejecutando {operation}: {e}")
             return False
+        finally:
+            # Limpiar imagen temporal si existe
+            if optimized_image_path and optimized_image_path != original_image_path:
+                try:
+                    if os.path.exists(optimized_image_path):
+                        os.remove(optimized_image_path)
+                        self.log("Imagen temporal eliminada")
+                except Exception as e:
+                    self.log(f"Error eliminando temporal: {e}")
     
     def _execute_delete(self, hik_manager, persona_id, hik_ip):
         """Ejecutar operacion de baja"""
