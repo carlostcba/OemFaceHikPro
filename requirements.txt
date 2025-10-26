@@ -1,0 +1,24 @@
+# Requisitos para Monitor Hikvision con System Tray
+
+# Interfaz grafica
+tkinter  # Incluido en Python
+
+# System Tray
+pystray>=0.19.4
+Pillow>=9.0.0
+
+# Base de datos
+pyodbc>=4.0.35
+
+# HTTP y red
+requests>=2.28.0
+urllib3>=1.26.0
+
+# Procesamiento de imagenes (ya incluido con Pillow)
+# PIL esta incluido en Pillow
+
+# Dependencias adicionales del proyecto
+# Asegurate de tener estos modulos personalizados:
+# - database_connection.py
+# - queue_worker.py
+# - hikvision_manager.py
