@@ -3,6 +3,7 @@
 """
 hikvision_tcp_monitor_integrated.py
 Monitor de eventos Hikvision + Worker de Cola Automatico
+Con soporte para System Tray
 """
 
 import tkinter as tk
@@ -21,6 +22,10 @@ from concurrent.futures import ThreadPoolExecutor
 import traceback
 from database_connection import DatabaseManager
 from queue_worker import QueueWorker
+import pystray
+from PIL import Image
+import os
+import sys
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -76,6 +81,10 @@ class HikvisionIntegratedMonitor:
         self.root.geometry("750x550")
         self.root.resizable(True, True)
         
+        # System Tray
+        self.tray_icon = None
+        self.is_visible = True
+        
         # Servidor HTTP
         self.event_server = None
         self.event_server_thread = None
@@ -104,7 +113,114 @@ class HikvisionIntegratedMonitor:
         self.start_event_processor()
         self.root.after(100, self.start_server)
         self.root.after(300, self.start_worker)  # Iniciar worker automaticamente
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Configurar icono de ventana
+        self.load_window_icon()
+        
+        # Configurar System Tray
+        self.root.after(500, self.setup_system_tray)
+        
+        # Interceptar cierre de ventana
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
+        
+        # Iniciar minimizado
+        self.root.after(600, self.minimize_to_tray)
+
+    def load_window_icon(self):
+        """Cargar icono para la ventana"""
+        try:
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+                self.log_message(f"Icono cargado: {icon_path}")
+            else:
+                self.log_message(f"Icono no encontrado: {icon_path}")
+        except Exception as e:
+            self.log_message(f"Error cargando icono de ventana: {e}")
+
+    def setup_system_tray(self):
+        """Configurar icono en System Tray"""
+        try:
+            # Cargar icono
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
+            
+            if os.path.exists(icon_path):
+                image = Image.open(icon_path)
+            else:
+                # Crear icono por defecto si no existe
+                image = Image.new('RGB', (64, 64), color='darkblue')
+                self.log_message("Usando icono por defecto - icon.ico no encontrado")
+            
+            # Crear menu del tray
+            menu = pystray.Menu(
+                pystray.MenuItem("Mostrar", self.show_window, default=True),
+                pystray.MenuItem("Ocultar", self.hide_window),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Salir", self.quit_application)
+            )
+            
+            # Crear icono del tray
+            self.tray_icon = pystray.Icon(
+                "hikvision_monitor",
+                image,
+                "Monitor Hikvision + Worker",
+                menu
+            )
+            
+            # Ejecutar icono en thread separado
+            threading.Thread(target=self.tray_icon.run, daemon=True).start()
+            self.log_message("System Tray inicializado correctamente")
+            
+        except Exception as e:
+            self.log_message(f"Error configurando System Tray: {e}")
+            traceback.print_exc()
+
+    def show_window(self, icon=None, item=None):
+        """Mostrar ventana principal"""
+        self.root.after(0, self._show_window_impl)
+    
+    def _show_window_impl(self):
+        """Implementacion de mostrar ventana (debe ejecutarse en main thread)"""
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        self.is_visible = True
+        self.log_message("Ventana mostrada")
+
+    def hide_window(self, icon=None, item=None):
+        """Ocultar ventana al system tray"""
+        self.root.withdraw()
+        self.is_visible = False
+        self.log_message("Ventana minimizada al system tray")
+
+    def minimize_to_tray(self):
+        """Minimizar al tray al iniciar"""
+        self.hide_window()
+        self.log_message("Aplicacion iniciada en system tray")
+
+    def quit_application(self, icon=None, item=None):
+        """Salir completamente de la aplicacion"""
+        self.log_message("Cerrando aplicacion...")
+        
+        # Detener tray icon
+        if self.tray_icon:
+            self.tray_icon.stop()
+        
+        # Detener servicios
+        if self.event_server:
+            self.stop_server()
+        
+        if self.queue_worker.is_running:
+            self.stop_worker()
+        
+        if self.db_manager:
+            self.db_manager.disconnect()
+        
+        self.executor.shutdown(wait=True)
+        
+        # Cerrar ventana
+        self.root.quit()
+        self.root.destroy()
 
     def setup_ui(self):
         main_frame = ttk.Frame(self.root, padding="10")
@@ -598,18 +714,8 @@ class HikvisionIntegratedMonitor:
         self.root.update_idletasks()
 
     def on_closing(self):
-        """Cierre de aplicacion"""
-        if self.event_server:
-            self.stop_server()
-        
-        if self.queue_worker.is_running:
-            self.stop_worker()
-        
-        if self.db_manager:
-            self.db_manager.disconnect()
-        
-        self.executor.shutdown(wait=True)
-        self.root.destroy()
+        """Cierre de aplicacion (no usado, ahora se usa quit_application)"""
+        self.quit_application()
 
 if __name__ == "__main__":
     root = tk.Tk()
