@@ -39,20 +39,12 @@ instalar_dependencias.bat
 pip install pystray Pillow pyodbc requests urllib3
 ```
 
-### 2. Preparar Icono
-```bash
-# Opcion A: Crear icono por defecto
-python crear_icono.py
-
-# Opcion B: Colocar tu propio icon.ico en la carpeta
-```
-
-### 3. Ejecutar
+### 2. Ejecutar
 ```bash
 python hikvision_tcp_monitor.py
 ```
 
-### 4. Buscar el Icono
+### 3. Buscar el Icono
 - Busca el icono en el area de notificacion (junto al reloj)
 - Doble clic para abrir la ventana
 - Clic derecho para ver el menu
@@ -69,20 +61,9 @@ icon.ico                     # Icono de la aplicacion
 videoman.udl                 # Configuracion de BD
 ```
 
-### Documentacion
-```
-README.md                         # Este archivo
-GUIA_RAPIDA.md                    # Inicio rapido (5 min)
-DOCUMENTACION_SYSTEM_TRAY.md     # Documentacion completa
-RESUMEN_CAMBIOS.md                # Detalles tecnicos
-GUIA_DE_USO.md                    # Guia del usuario
-CAMBIOS_REALIZADOS.md             # Log de cambios
-```
-
 ### Utilidades
 ```
 instalar_dependencias.bat    # Script de instalacion
-crear_icono.py               # Generador de icono
 requirements.txt             # Dependencias Python
 ```
 
@@ -218,13 +199,6 @@ pip install --upgrade pystray Pillow
 1. Verifica credenciales en videoman.udl
 2. Prueba conexion con SQL Server Management Studio
 3. Verifica que el servicio SQL Server este corriendo
-
-## Documentacion Adicional
-
-- **[GUIA_RAPIDA.md](GUIA_RAPIDA.md)**: Inicio en 5 minutos
-- **[DOCUMENTACION_SYSTEM_TRAY.md](DOCUMENTACION_SYSTEM_TRAY.md)**: Guia completa del system tray
-- **[RESUMEN_CAMBIOS.md](RESUMEN_CAMBIOS.md)**: Detalles tecnicos de cambios
-- **[GUIA_DE_USO.md](GUIA_DE_USO.md)**: Manual de usuario completo
 
 ## Iniciar con Windows
 
